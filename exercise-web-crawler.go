@@ -17,30 +17,29 @@ type Cache struct {
 	mux sync.Mutex
 }
 
-// Set sets a key concurrently
+// Set assigns a key concurrently
 func (c *Cache) Set(key string) {
     c.mux.Lock()
 	defer c.mux.Unlock()
 	c.url[key] = true
 }
 
-// Get gets a key concurrently
-func (c *Cache) Get(key string) (bool, bool) {
+// Get checks if key is present
+func (c *Cache) Get(key string) (bool) {
     c.mux.Lock()
 	defer c.mux.Unlock()
-    flag, ok := c.url[key]
-	return flag, ok
+    _, ok := c.url[key]
+	return ok
 }
 
 // Crawl uses fetcher to recursively crawl
 // pages starting with url, to a maximum of depth.
 func Crawl(url string, fetcher fakeFetcher, cache *Cache, ch chan string) {
-    defer close(ch)
     // Check if the url is already in the cache
-    if _, ok := cache.Get(url); ok {
+    if cache.Get(url) {
 	    return
 	}
-    
+
 	cache.Set(url)
 	body, urls, err := fetcher.Fetch(url)
 
@@ -50,29 +49,22 @@ func Crawl(url string, fetcher fakeFetcher, cache *Cache, ch chan string) {
 	}
 
 	ch <- fmt.Sprintf("found: %s %q\n", url, body)
-    results := make([]chan string, len(urls))
-    
-	for i, u := range urls {
-	    results[i] = make(chan string)
-		go Crawl(u, fetcher, cache, results[i] )
+
+	for _, u := range urls {
+		go Crawl(u, fetcher, cache, ch)
 	}
 
-	for i := range results {
-        for result := range results[i] {
-            ch <- result
-        }
-    }
-	
 	return
 }
 
 func main() {
     cache := Cache{url: make(map[string]bool)}
     ch := make(chan string)
+    defer close(ch)
 	go Crawl("https://golang.org/", fetcher, &cache, ch)
-	
-	for result := range ch {
-	    fmt.Print(result)
+
+	for i := 0; i < len(fetcher); i++ {
+	    fmt.Print(<-ch)
 	}
 }
 
@@ -88,6 +80,7 @@ func (f fakeFetcher) Fetch(url string) (string, []string, error) {
 	if res, ok := f[url]; ok {
 		return res.body, res.urls, nil
 	}
+
 	return "", nil, fmt.Errorf("not found: %s", url)
 }
 
